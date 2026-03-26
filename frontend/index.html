@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pathfinding Visualizer Pro (Draggable)</title>
+    <style>
+        body {
+            background-color: #1a1b20;
+            color: #8b929a;
+            font-family: 'Segoe UI', sans-serif;
+            text-align: center;
+            margin-top: 20px;
+            user-select: none; /* Prevents text highlighting while dragging */
+        }
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            background: #25262c;
+            padding: 15px;
+            border-radius: 8px;
+            width: fit-content;
+            margin: 0 auto 20px auto;
+        }
+        select, button, input {
+            background-color: #343a40;
+            color: white;
+            border: 1px solid #555;
+            padding: 8px 12px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        #runBtn { background-color: #2ecc71; color: #1a1b20; font-weight: bold; border: none; }
+        #runBtn:hover { background-color: #27ae60; }
+        
+        #grid {
+            display: grid;
+            grid-template-columns: repeat(12, 45px);
+            gap: 2px;
+            justify-content: center;
+        }
+        .cell {
+            width: 45px;
+            height: 45px;
+            background-color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        .cost-label { position: absolute; top: 2px; left: 2px; color: #999; font-size: 8px; pointer-events: none; }
+        .dist-label { position: absolute; bottom: 2px; right: 2px; color: #3498db; font-size: 8px; font-weight: bold; pointer-events: none; }
+
+        .start { background-color: #2ecc71 !important; cursor: grab; }
+        .start:active { cursor: grabbing; }
+        .end { background-color: #e74c3c !important; cursor: grab; }
+        .end:active { cursor: grabbing; }
+        
+        .wall { background-color: #444444 !important; }
+        .traffic { background-color: #f1c40f !important; }
+        .visited { background-color: #d1d8e0; border: 1px solid #bdc3c7; }
+        .path { background-color: #3498db !important; z-index: 2; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <h2>Pathfinding Visualizer</h2>
+    <p style="font-size: 0.9em;">Drag <b>Green</b> or <b>Red</b> to move them. Click white squares for <b>Walls/Traffic</b>.</p>
+    
+    <div class="controls">
+        <select id="algorithm">
+            <option value="dfs">DFS (Depth-First)</option>
+            <option value="bfs">BFS (Breadth-First)</option>
+            <option value="ucs">UCS (Uniform Cost)</option>
+            <option value="astar">A* Search</option>
+        </select>
+        
+        <div>
+            <label>Speed: </label>
+            <input type="range" id="speed" min="1" max="200" value="100">
+        </div>
+
+        <button id="runBtn">Run AI</button>
+        <button id="randomWallsBtn">Random Walls</button>
+        <button id="resetBtn">Reset Grid</button>
+    </div>
+
+    <h3 id="status">Status: Ready</h3>
+
+    <div id="grid"></div>
+
+    <script>
+        const gridElement = document.getElementById('grid');
+        const rows = 12;
+        const cols = 12;
+        let grid = [];
+        let startNode = { r: 0, c: 0 };
+        let endNode = { r: 11, c: 11 };
+        
+        let isRunning = false;
+        let draggingNode = null; // 'start' or 'end'
+
+        function getManhattanDist(r, c) {
+            return Math.abs(r - endNode.r) + Math.abs(c - endNode.c);
+        }
+
+        function createGrid() {
+            gridElement.innerHTML = '';
+            grid = [];
+            for (let r = 0; r < rows; r++) {
+                let row = [];
+                for (let c = 0; c < cols; c++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.dataset.r = r;
+                    cell.dataset.c = c;
+                    
+                    const costSpan = document.createElement('span');
+                    costSpan.className = 'cost-label';
+                    costSpan.innerText = '1';
+                    
+                    const distSpan = document.createElement('span');
+                    distSpan.className = 'dist-label';
+                    distSpan.innerText = getManhattanDist(r, c);
+
+                    cell.appendChild(costSpan);
+                    cell.appendChild(distSpan);
+
+                    updateCellVisuals(cell, r, c);
+
+                    // --- MOUSE EVENTS ---
+                    cell.addEventListener('mousedown', (e) => {
+                        if (isRunning) return;
+                        if (r === startNode.r && c === startNode.c) {
+                            draggingNode = 'start';
+                        } else if (r === endNode.r && c === endNode.c) {
+                            draggingNode = 'end';
+                        } else {
+                            toggleCell(cell);
+                        }
+                    });
+
+                    cell.addEventListener('mouseenter', () => {
+                        if (!draggingNode || isRunning) return;
+                        moveNode(r, c);
+                    });
+
+                    gridElement.appendChild(cell);
+                    row.push(cell);
+                }
+                grid.push(row);
+            }
+        }
+
+        // Handle releasing the drag anywhere on the page
+        window.addEventListener('mouseup', () => {
+            draggingNode = null;
+        });
+
+        function updateCellVisuals(cell, r, c) {
+            cell.classList.remove('start', 'end');
+            if (r === startNode.r && c === startNode.c) cell.classList.add('start');
+            else if (r === endNode.r && c === endNode.c) cell.classList.add('end');
+            
+            // Update distance labels for everyone when nodes move
+            const distLabel = cell.querySelector('.dist-label');
+            if (distLabel && !cell.classList.contains('wall')) {
+                distLabel.innerText = getManhattanDist(r, c);
+            }
+        }
+
+        function moveNode(r, c) {
+            // Don't let Start and End overlap, or move onto a wall
+            if (grid[r][c].classList.contains('wall')) return;
+            if (draggingNode === 'start' && (r !== endNode.r || c !== endNode.c)) {
+                const oldR = startNode.r, oldC = startNode.c;
+                startNode = { r, c };
+                updateCellVisuals(grid[oldR][oldC], oldR, oldC);
+                updateCellVisuals(grid[r][c], r, c);
+            } else if (draggingNode === 'end' && (r !== startNode.r || c !== startNode.c)) {
+                const oldR = endNode.r, oldC = endNode.c;
+                endNode = { r, c };
+                // When end moves, we need to refresh all distance labels
+                for(let row=0; row<rows; row++) {
+                    for(let col=0; col<cols; col++) {
+                        updateCellVisuals(grid[row][col], row, col);
+                    }
+                }
+            }
+            clearPathVisuals();
+        }
+
+        function toggleCell(cell) {
+            if (cell.classList.contains('start') || cell.classList.contains('end')) return;
+            const costSpan = cell.querySelector('.cost-label');
+            const distSpan = cell.querySelector('.dist-label');
+
+            if (cell.classList.contains('wall')) {
+                cell.classList.remove('wall');
+                cell.classList.add('traffic');
+                costSpan.innerText = '5';
+                distSpan.innerText = getManhattanDist(parseInt(cell.dataset.r), parseInt(cell.dataset.c));
+            } else if (cell.classList.contains('traffic')) {
+                cell.classList.remove('traffic');
+                costSpan.innerText = '1';
+            } else {
+                cell.classList.add('wall');
+                costSpan.innerText = '';
+                distSpan.innerText = '';
+            }
+        }
+
+        function clearPathVisuals() {
+            for(let r=0; r<rows; r++) {
+                for(let c=0; c<cols; c++) {
+                    grid[r][c].classList.remove('visited', 'path');
+                }
+            }
+        }
+
+        const sleep = () => new Promise(res => setTimeout(res, 201 - document.getElementById('speed').value));
+
+        function getNeighbors(r, c) {
+            const dirs = [{dr: 0, dc: 1}, {dr: 1, dc: 0}, {dr: 0, dc: -1}, {dr: -1, dc: 0}];
+            let res = [];
+            for (let d of dirs) {
+                let nr = r + d.dr, nc = c + d.dc;
+                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !grid[nr][nc].classList.contains('wall')) {
+                    res.push({r: nr, c: nc});
+                }
+            }
+            return res;
+        }
+
+        async function runAI() {
+            if (isRunning) return;
+            isRunning = true;
+            clearPathVisuals();
+            
+            const algo = document.getElementById('algorithm').value;
+            let cameFrom = {};
+            let found = false;
+
+            if (algo === 'ucs' || algo === 'astar') {
+                let pq = [{r: startNode.r, c: startNode.c, priority: 0}];
+                let costs = {[`${startNode.r},${startNode.c}`]: 0};
+
+                while (pq.length > 0) {
+                    pq.sort((a, b) => a.priority - b.priority);
+                    let curr = pq.shift();
+                    let currKey = `${curr.r},${curr.c}`;
+
+                    if (curr.r === endNode.r && curr.c === endNode.c) { found = true; break; }
+                    if (!(curr.r === startNode.r && curr.c === startNode.c)) {
+                        grid[curr.r][curr.c].classList.add('visited');
+                        await sleep();
+                    }
+
+                    for (let n of getNeighbors(curr.r, curr.c)) {
+                        let weight = grid[n.r][n.c].classList.contains('traffic') ? 5 : 1;
+                        let newCost = costs[currKey] + weight;
+                        let nKey = `${n.r},${n.c}`;
+                        if (!(nKey in costs) || newCost < costs[nKey]) {
+                            costs[nKey] = newCost;
+                            cameFrom[nKey] = currKey;
+                            let priority = newCost + (algo === 'astar' ? getManhattanDist(n.r, n.c) : 0);
+                            pq.push({r: n.r, c: n.c, priority: priority});
+                        }
+                    }
+                }
+            } else {
+                let list = [{r: startNode.r, c: startNode.c}];
+                let visited = new Set([`${startNode.r},${startNode.c}`]);
+                while (list.length > 0) {
+                    let curr = (algo === 'bfs') ? list.shift() : list.pop();
+                    if (curr.r === endNode.r && curr.c === endNode.c) { found = true; break; }
+                    if (!(curr.r === startNode.r && curr.c === startNode.c)) {
+                        grid[curr.r][curr.c].classList.add('visited');
+                        await sleep();
+                    }
+                    for (let n of getNeighbors(curr.r, curr.c)) {
+                        let nKey = `${n.r},${n.c}`;
+                        if (!visited.has(nKey)) {
+                            visited.add(nKey);
+                            cameFrom[nKey] = `${curr.r},${curr.c}`;
+                            list.push(n);
+                        }
+                    }
+                }
+            }
+
+            if (found) {
+                let curr = `${endNode.r},${endNode.c}`;
+                while (cameFrom[curr]) {
+                    let [r, c] = curr.split(',').map(Number);
+                    if (!(r === endNode.r && c === endNode.c)) grid[r][c].classList.add('path');
+                    curr = cameFrom[curr];
+                    await sleep();
+                }
+            }
+            isRunning = false;
+        }
+
+        document.getElementById('resetBtn').addEventListener('click', () => { if (!isRunning) createGrid(); });
+        document.getElementById('runBtn').addEventListener('click', runAI);
+        document.getElementById('randomWallsBtn').addEventListener('click', () => {
+            if (isRunning) return;
+            createGrid();
+            for(let r=0; r<rows; r++) {
+                for(let c=0; c<cols; c++) {
+                    if ((r === startNode.r && c === startNode.c) || (r === endNode.r && c === endNode.c)) continue;
+                    if (Math.random() < 0.25) {
+                        grid[r][c].classList.add('wall');
+                        grid[r][c].querySelectorAll('span').forEach(s => s.innerText = '');
+                    }
+                }
+            }
+        });
+
+        createGrid();
+    </script>
+</body>
+</html>
